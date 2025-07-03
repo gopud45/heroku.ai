@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Stock Analysis Dashboard</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js CDN for charting -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <!-- Chart.js Adapter for Date/Time (required for time scale) -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.umd.min.js"></script>
+    <style>
+        /* Custom CSS for scrollbar hiding (Tailwind doesn't have this directly) */
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4 font-sans">
+    <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-4xl flex flex-col lg:flex-row gap-6">
+
+        <!-- Left Panel: Stock Data & Charts -->
+        <div class="flex-1 space-y-6">
+            <h1 class="text-3xl font-bold text-gray-800 text-center">Stock Analysis Dashboard</h1>
+
+            <!-- Stock Ticker Input -->
+            <div class="flex flex-col sm:flex-row gap-2">
+                <input type="text" id="tickerInput" placeholder="Enter stock ticker (e.g., AAPL)"
+                       class="flex-1 p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200">
+                <button id="fetchDataBtn"
+                        class="px-6 py-3 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition duration-200">
+                    Fetch Data
+                </button>
+            </div>
+
+            <!-- Loading Indicator -->
+            <div id="loadingIndicator" class="text-center text-blue-600 font-medium hidden">
+                Fetching data...
+            </div>
+            <div id="errorDisplay" class="text-center text-red-600 font-medium hidden">
+                Error: Could not fetch data.
+            </div>
+
+            <!-- Stock Summary -->
+            <div id="stockSummary" class="bg-gray-50 p-4 rounded-md shadow-sm hidden">
+                <h2 class="text-xl font-semibold text-gray-700 mb-2">Summary for <span id="summaryTicker"></span></h2>
+                <p><strong>Period:</strong> Last 5 Years</p>
+                <p><strong>Start Date:</strong> <span id="summaryStartDate"></span></p>
+                <p><strong>End Date:</strong> <span id="summaryEndDate"></span></p>
+                <p><strong>Open Price:</strong> $<span id="summaryOpenPrice"></span></p>
+                <p><strong>Close Price:</strong> $<span id="summaryClosePrice"></span></p>
+                <p><strong>Highest Price:</strong> $<span id="summaryHighPrice"></span></p>
+                <p><strong>Lowest Price:</strong> $<span id="summaryLowPrice"></span></p>
+                <p><strong>Avg. Daily Volume:</strong> <span id="summaryAvgVolume"></span></p>
+            </div>
+
+            <!-- Charts -->
+            <div class="space-y-4">
+                <div class="bg-white p-4 rounded-md shadow-sm">
+                    <h2 class="text-xl font-semibold text-gray-700 mb-2">Price Chart</h2>
+                    <canvas id="priceChart"></canvas>
+                </div>
+                <div class="bg-white p-4 rounded-md shadow-sm">
+                    <h2 class="text-xl font-semibold text-gray-700 mb-2">Volume Chart</h2>
+                    <canvas id="volumeChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Panel: AI Assistant -->
+        <div class="flex-1 flex flex-col bg-gray-50 rounded-lg shadow-sm p-4">
+            <h2 class="text-xl font-bold text-gray-800 mb-4 text-center">AI Stock Assistant</h2>
+
+            <!-- Chat History -->
+            <div id="chatHistory" class="flex-1 overflow-y-auto hide-scrollbar p-3 bg-white rounded-md border border-gray-200 mb-4 space-y-3">
+                <div class="text-gray-500 text-sm italic">Ask me anything about the stock data!</div>
+            </div>
+
+            <!-- Chat Input -->
+            <div class="flex gap-2">
+                <input type="text" id="chatInput" placeholder="Ask a question..."
+                       class="flex-1 p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200">
+                <button id="sendChatBtn"
+                        class="px-4 py-3 bg-green-600 text-white font-semibold rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition duration-200">
+                    Send
+                </button>
+            </div>
+            <div id="aiLoadingIndicator" class="text-center text-green-600 font-medium mt-2 hidden">
+                AI is thinking...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Frontend JavaScript Logic
+        document.addEventListener('DOMContentLoaded', () => {
+            const tickerInput = document.getElementById('tickerInput');
+            const fetchDataBtn = document.getElementById('fetchDataBtn');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            const errorDisplay = document.getElementById('errorDisplay');
+            const stockSummary = document.getElementById('stockSummary');
+
+            const summaryTicker = document.getElementById('summaryTicker');
+            const summaryStartDate = document.getElementById('summaryStartDate');
+            const summaryEndDate = document.getElementById('summaryEndDate');
+            const summaryOpenPrice = document.getElementById('summaryOpenPrice');
+            const summaryClosePrice = document.getElementById('summaryClosePrice');
+            const summaryHighPrice = document.getElementById('summaryHighPrice');
+            const summaryLowPrice = document.getElementById('summaryLowPrice');
+            const summaryAvgVolume = document.getElementById('summaryAvgVolume');
+
+            const chatHistory = document.getElementById('chatHistory');
+            const chatInput = document.getElementById('chatInput');
+            const sendChatBtn = document.getElementById('sendChatBtn');
+            const aiLoadingIndicator = document.getElementById('aiLoadingIndicator');
+
+            let priceChartInstance = null;
+            let volumeChartInstance = null;
+            let currentStockData = null; // Store fetched data for AI context
+            let currentTicker = '';
+
+            // --- Chart Initialization ---
+            const ctxPrice = document.getElementById('priceChart').getContext('2d');
+            const ctxVolume = document.getElementById('volumeChart').getContext('2d');
+
+            // Function to render charts
+            function renderCharts(data, ticker) {
+                const dates = data.map(item => item.Date);
+                const closePrices = data.map(item => item.Close);
+                const volumes = data.map(item => item.Volume);
+
+                // Destroy existing chart instances if they exist
+                if (priceChartInstance) {
+                    priceChartInstance.destroy();
+                }
+                if (volumeChartInstance) {
+                    volumeChartInstance.destroy();
+                }
+
+                // Price Chart
+                priceChartInstance = new Chart(ctxPrice, {
+                    type: 'line',
+                    data: {
+                        labels: dates,
+                        datasets: [{
+                            label: `${ticker} Close Price ($)`,
+                            data: closePrices,
+                            borderColor: 'rgb(75, 192, 192)',
+                            tension: 0.1,
+                            fill: false
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                type: 'time',
+                                time: {
+                                    unit: 'month'
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'Date'
+                                }
+                            },
+                            y: {
+                                beginAtZero: false,
+                                title: {
+                                    display: true,
+                                    text: 'Price ($)'
+                                }
+                            }
+                        },
+                        plugins: {
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        return `${context.dataset.label}: $${context.parsed.y.toFixed(2)}`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
+                // Volume Chart
+                volumeChartInstance = new Chart(ctxVolume, {
+                    type: 'bar',
+                    data: {
+                        labels: dates,
+                        datasets: [{
+                            label: `${ticker} Volume`,
+                            data: volumes,
+                            backgroundColor: 'rgba(153, 102, 255, 0.6)',
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                type: 'time',
+                                time: {
+                                    unit: 'month'
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'Date'
+                                }
+                            },
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: 'Volume'
+                                }
+                            }
+                        },
+                        plugins: {
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        return `${context.dataset.label}: ${context.parsed.y.toLocaleString()}`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // --- Fetch Stock Data Function ---
+            async function fetchStockData() {
+                const ticker = tickerInput.value.trim().toUpperCase();
+                if (!ticker) {
+                    errorDisplay.textContent = "Please enter a stock ticker.";
+                    errorDisplay.classList.remove('hidden');
+                    return;
+                }
+
+                loadingIndicator.classList.remove('hidden');
+                errorDisplay.classList.add('hidden');
+                stockSummary.classList.add('hidden'); // Hide summary until data is ready
+
+                try {
+                    // IMPORTANT: Adjust this URL based on where your Python backend is hosted.
+                    // For local development, it's typically 'http://127.0.0.1:5000'.
+                    // For deployment (e.g., Heroku), replace with your deployed backend URL.
+                    const backendBaseUrl = 'http://127.0.0.1:5000'; 
+
+                    const response = await fetch(`${backendBaseUrl}/api/stock_data?ticker=${ticker}`);
+                    const result = await response.json();
+
+                    if (response.ok) {
+                        currentStockData = result.data; // Store full data for AI context
+                        currentTicker = result.ticker;
+
+                        // Calculate summary statistics
+                        const df = result.data;
+                        const firstDate = df[0].Date;
+                        const lastDate = df[df.length - 1].Date;
+                        const openPrice = df[0].Open;
+                        const closePrice = df[df.length - 1].Close;
+
+                        let highestPrice = 0;
+                        let lowestPrice = Infinity;
+                        let totalVolume = 0;
+
+                        df.forEach(item => {
+                            if (item.High > highestPrice) highestPrice = item.High;
+                            if (item.Low < lowestPrice) lowestPrice = item.Low;
+                            totalVolume += item.Volume;
+                        });
+                        const avgVolume = totalVolume / df.length;
+
+                        // Update summary display
+                        summaryTicker.textContent = currentTicker;
+                        summaryStartDate.textContent = firstDate;
+                        summaryEndDate.textContent = lastDate;
+                        summaryOpenPrice.textContent = openPrice.toFixed(2);
+                        summaryClosePrice.textContent = closePrice.toFixed(2);
+                        summaryHighPrice.textContent = highestPrice.toFixed(2);
+                        summaryLowPrice.textContent = lowestPrice.toFixed(2);
+                        summaryAvgVolume.textContent = avgVolume.toLocaleString(undefined, { maximumFractionDigits: 0 });
+                        stockSummary.classList.remove('hidden');
+
+                        renderCharts(currentStockData, currentTicker);
+                        chatHistory.innerHTML = '<div class="text-gray-500 text-sm italic">Ask me anything about the stock data!</div>'; // Clear chat history
+                    } else {
+                        errorDisplay.textContent = result.error || "Failed to fetch stock data.";
+                        errorDisplay.classList.remove('hidden');
+                        currentStockData = null;
+                        currentTicker = '';
+                        if (priceChartInstance) priceChartInstance.destroy();
+                        if (volumeChartInstance) volumeChartInstance.destroy();
+                    }
+                } catch (error) {
+                    console.error('Error fetching data:', error);
+                    errorDisplay.textContent = "Network error or backend issue. Ensure Python backend is running and accessible.";
+                    errorDisplay.classList.remove('hidden');
+                    currentStockData = null;
+                    currentTicker = '';
+                    if (priceChartInstance) priceChartInstance.destroy();
+                    if (volumeChartInstance) volumeChartInstance.destroy();
+                } finally {
+                    loadingIndicator.classList.add('hidden');
+                }
+            }
+
+            // --- AI Assistant Chat Function ---
+            async function sendChatToAI() {
+                const message = chatInput.value.trim();
+                if (!message) return;
+
+                if (!currentStockData || !currentTicker) {
+                    addChatMessage('AI Assistant', 'Please fetch stock data first before asking questions.', 'ai');
+                    chatInput.value = '';
+                    return;
+                }
+
+                addChatMessage('You', message, 'user');
+                chatInput.value = '';
+                aiLoadingIndicator.classList.remove('hidden');
+                chatHistory.scrollTop = chatHistory.scrollHeight; // Scroll to bottom
+
+                try {
+                    // IMPORTANT: Use the same backend URL as for stock data.
+                    const backendBaseUrl = 'http://127.0.0.1:5000'; 
+
+                    const payload = {
+                        message: message,
+                        ticker: currentTicker,
+                        stock_data_context: currentStockData // Send the full fetched data as context
+                    };
+
+                    const response = await fetch(`${backendBaseUrl}/api/chat_ai`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(payload),
+                    });
+
+                    const result = await response.json();
+
+                    if (response.ok) {
+                        addChatMessage('AI Assistant', result.response, 'ai');
+                    } else {
+                        addChatMessage('AI Assistant', `Error: ${result.error || 'Something went wrong.'}`, 'ai');
+                    }
+                } catch (error) {
+                    console.error('Error sending chat to AI:', error);
+                    addChatMessage('AI Assistant', 'Network error or AI service unavailable. Ensure backend is running and accessible.', 'ai');
+                } finally {
+                    aiLoadingIndicator.classList.add('hidden');
+                    chatHistory.scrollTop = chatHistory.scrollHeight; // Scroll to bottom after response
+                }
+            }
+
+            // --- Add Chat Message to History ---
+            function addChatMessage(sender, message, type) {
+                const messageDiv = document.createElement('div');
+                messageDiv.classList.add('p-2', 'rounded-lg', 'max-w-[80%]');
+
+                if (type === 'user') {
+                    messageDiv.classList.add('bg-blue-100', 'self-end', 'ml-auto', 'text-right');
+                    messageDiv.innerHTML = `<p class="font-semibold text-blue-800">You:</p><p class="text-gray-800">${message}</p>`;
+                } else {
+                    messageDiv.classList.add('bg-gray-100', 'self-start', 'mr-auto');
+                    messageDiv.innerHTML = `<p class="font-semibold text-gray-700">AI Assistant:</p><p class="text-gray-800">${message}</p>`;
+                }
+                chatHistory.appendChild(messageDiv);
+                chatHistory.scrollTop = chatHistory.scrollHeight; // Auto-scroll to bottom
+            }
+
+            // --- Event Listeners ---
+            fetchDataBtn.addEventListener('click', fetchStockData);
+            tickerInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    fetchDataBtn.click();
+                }
+            });
+
+            sendChatBtn.addEventListener('click', sendChatToAI);
+            chatInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    sendChatToAI();
+                }
+            });
+
+            // Initial fetch for a default ticker
+            tickerInput.value = 'GOOG'; // Set a default ticker
+            fetchDataBtn.click(); // Trigger initial data fetch on load
+        });
+    </script>
+</body>
+</html>
